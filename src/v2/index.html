@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-Hant">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>會議翻譯</title>
+  <link rel="stylesheet" href="./styles/main.css" />
+</head>
+
+<body>
+  <!-- 標題列的替代品：decorations:false，視窗只能靠這條拖動 -->
+  <header id="drag-region" data-tauri-drag-region>
+    <span class="app-title" data-tauri-drag-region>Glossline</span>
+    <div class="spacer" data-tauri-drag-region></div>
+    <button id="btn-window-mode" class="icon-btn" title="小浮窗（開會時擺旁邊）↔ 大視窗（看得舒服）。兩種尺寸各自記住。"
+      aria-pressed="false">🗗<span class="btn-label"> 小浮窗</span></button>
+    <button id="btn-fit" class="icon-btn" title="把視窗縮到目前這個螢幕裡（雙擊標題列也可以）">⤢<span class="btn-label"> 符合螢幕</span></button>
+    <button id="btn-library" class="icon-btn" title="回看以前的會議紀錄">📚<span class="btn-label"> 記錄庫</span></button>
+    <button id="btn-theme" class="icon-btn" title="切換亮色／暗色" aria-pressed="false">🌙<span class="btn-label"> 暗色</span></button>
+    <button id="btn-pin" class="icon-btn" title="切換視窗置頂" aria-pressed="false">📌<span class="btn-label"> 置頂</span></button>
+    <button id="btn-settings" class="icon-btn" title="設定">⚙<span class="btn-label"> 設定</span></button>
+    <button id="btn-close-app" class="icon-btn danger" title="關閉">✕</button>
+  </header>
+
+  <main id="main-view">
+    <section id="subtitle-panel" class="panel"></section>
+    <div class="control-bar">
+      <button id="btn-toggle" class="primary-btn" type="button">▶ 開始</button>
+      <!-- 中場休息。只有收音中才出現；休息時錄音沒有停，停的是字幕與 Soniox 的計費。 -->
+      <button id="btn-pause" class="primary-btn" type="button" hidden
+              title="中場休息：錄音照常寫（檔案長度＝真實時間），字幕與計費暫停。按「繼續」接回同一場、同一個檔。">⏸ 休息</button>
+      <!-- F2：只記時間，字句停止時才從定稿補上（理由見 marks.js）。只在收音中出現。 -->
+      <button id="btn-mark" class="primary-btn" type="button" hidden
+              title="記下現在這個時間點。停止後存成錄音資料夾裡的「重點標記.md」，附前後最近的字幕。">⭐ 標記重點</button>
+      <p id="status-line" class="status-line">啟動中…</p>
+    </div>
+    <!-- 收尾進度。按停止之後那幾秒，畫面上原本只有
+         「收尾中…」三個字，實際使用時第一句反應就是「不知道有沒有卡住」。
+         ⚠ **刻意不報百分比**：四步各花多久還沒量到（`[收尾計時]` 那行要等實錄），
+           憑印象分四等分就會做出「跑到 90% 卡住」的東西——那正是這裡要治的病。
+           四格只代表「第幾步」，不代表時間比例，文案也不可以寫成百分比。
+         ⚠ 跟 #alert-line 同理**留在 .control-bar 外面**：收音中外殼會被收成高度 0
+           （main.css 的 body.chrome-hidden），放進去等於最需要的時候看不見。 -->
+    <div id="stop-progress" class="stop-progress" hidden>
+      <div id="stop-progress-bar" class="stop-progress-bar" role="img" aria-label="收尾進度">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <p id="stop-progress-text" class="stop-progress-text"></p>
+      <p id="stop-progress-slow" class="stop-progress-slow" hidden>這一步比平常久，還在跑，先別關 App。</p>
+    </div>
+    <!-- 斷線／降級／存檔失敗的警示。這些事一律不准只寫進 console（會議模式禁止靜默降級）。 -->
+    <p id="alert-line" class="alert-line" hidden></p>
+    <!-- 麥克風沒聲音／斷了。自己一格（不進 #alert-line：那格會被下一則洗掉），
+         同理留在 .control-bar 外面。按「知道了」只收起，麥克風恢復後再出事一樣會再跳。 -->
+    <div id="mic-alert" class="alert-line fatal mic-alert" hidden>
+      <span id="mic-alert-text"></span>
+      <button id="btn-mic-alert-ok" type="button">知道了</button>
+    </div>
+    <!-- 常駐通知區：可以多行，**只有下一次按「開始」才清**。
+         ⚠ 一定要留在 .control-bar 外面：`body.chrome-hidden .control-bar` 會被收成高度 0
+         （main.css:199-204），而一開始收音外殼就自動收起——放進去等於紅字在會議進行中
+         看不見、停止後才出現，正好在最需要的時間缺席。#alert-line 也是為了這個留在外面的。 -->
+    <div id="persistent-notice" class="persistent-notice" hidden></div>
+
+    <!-- 錄音中的持續指示。
+         ⚠ 只讓按鈕變成「■ 停止」不夠：那顆鈕在小浮窗模式下會被收起來，
+           而且「鈕的字變了」不是一句話，開會中沒有人會去讀一顆按鈕。
+           這一行是給「被錄的人問起來時」看的——它必須一直在。 -->
+    <p id="recording-indicator" class="recording-indicator" hidden>
+      🔴 錄音中 <span id="recording-elapsed" class="recording-elapsed">00:00</span> — 這場會議的聲音正在被錄下來並轉成文字
+    </p>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- 收工報告：散會時把「這一軌到底有沒有收到聲音」講出來。
+       錄音時補靜音（保留真實時間軸）會讓空錄音的檔案看起來完全正常，這張單子是唯一分得出來的地方。 -->
+  <div id="report-modal" class="modal-overlay" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="report-title">
+      <h2 id="report-title">收工報告</h2>
+      <div id="report-body"></div>
+      <!-- 散會命名：名字打在這裡，因為這是人散會當下唯一會看的框。晚一步
+           （做成記錄庫裡的一顆編輯鍵）就等於沒有人會命名——事後沒有人回來取名。
+           ⚠ 這一段刻意留在 HTML 裡、不由 report-panel.js 畫：那支是純函式、
+              零 DOM 依賴，node 才測得動，別為了一個輸入框把它拖進 DOM。 -->
+      <div id="report-name-row" hidden>
+        <label for="report-name-input">這場叫什麼？</label>
+        <div class="report-name-controls">
+          <input
+            id="report-name-input"
+            type="text"
+            maxlength="40"
+            placeholder="例：Alice 週會"
+            autocomplete="off"
+          />
+          <button id="btn-report-name-save" type="button">存名字</button>
+        </div>
+        <p id="report-name-hint">會接在錄音資料夾名字後面，記錄庫那筆也一起改。不取名也沒關係。</p>
+        <p id="report-name-status" hidden></p>
+      </div>
+      <!-- ⚠ 開資料夾失敗的話要講在這裡，不能只丟到 #alert-line：
+           報告框是全螢幕遮罩（.modal-overlay），底下那行會被蓋住看不見。 -->
+      <p id="report-error" class="report-verdict" hidden></p>
+      <footer class="modal-actions">
+        <button id="btn-report-open-dir" type="button" hidden>開啟資料夾</button>
+        <button id="btn-report-close" type="button">關閉</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 開始前的自我檢查：全綠不會跳，只有 warn／fail 才看得到這個框。
+       按鈕是按情況出現的——「換資料夾」只在「寫不進去」那一項紅的時候才有意義。 -->
+  <div id="precheck-modal" class="modal-overlay" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="precheck-title">
+      <h2 id="precheck-title">開始前的檢查</h2>
+      <div id="precheck-body"></div>
+      <!-- 錄音告知。**只在這台機器第一次開始錄音時出現**，
+           看過就記住（settings 的 recording_consent_ack）。
+           ⚠ 這裡從「勾了才能開始」改成一行提示：擋人的那一版
+             會讓每一場的開頭多一個動作，而多出來的動作只會被學成反射。
+           ⚠ 也刻意不做成「每場都講一次」，理由同上。
+             每一場的告知責任由畫面上那條持續的「🔴 錄音中」承擔。 -->
+      <p id="precheck-consent" class="precheck-consent" hidden>
+        這支程式會錄下會議的聲音。請在開始之前先告訴與會的人——這件事只講這一次。
+      </p>
+      <footer class="modal-actions">
+        <button id="btn-precheck-pick-dir" type="button" hidden>換一個資料夾</button>
+        <button id="btn-precheck-no-record" type="button" hidden>這場不錄，只要字幕</button>
+        <button id="btn-precheck-cancel" type="button">先不要開始</button>
+        <button id="btn-precheck-go" type="button" class="primary">仍要開始</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 設定：Soniox ＋ 音訊來源 ＋ 顯示 -->
+  <div id="settings-modal" class="modal-overlay" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <h2 id="settings-title">設定</h2>
+
+      <section class="settings-section">
+        <h3>Soniox</h3>
+        <label class="field">
+          <span>API 金鑰</span>
+          <input id="set-api-key" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>來源語言</span>
+          <select id="set-source-lang">
+            <option value="auto">自動偵測</option>
+            <option value="en">英文</option>
+            <option value="de">德文</option>
+            <option value="fr">法文</option>
+            <option value="zh">中文</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>翻譯成</span>
+          <select id="set-target-lang">
+            <option value="zh">中文（畫面轉繁體）</option>
+            <option value="en">英文</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>硬詞表（一行一個，交給 Soniox 當提示）</span>
+          <textarea id="set-context-terms" rows="4" spellcheck="false"></textarea>
+        </label>
+        <label class="field">
+          <span>翻譯詞表（一行一組，寫成「原文 = 譯文」）</span>
+          <textarea id="set-context-translation-terms" rows="4" spellcheck="false"
+            placeholder="lead time = 前置時間"></textarea>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>音訊來源</h3>
+
+        <div class="device-box" id="device-box">
+          <div class="device-row">
+            <span class="device-role">輸出（喇叭）</span>
+            <span><span class="device-name" id="dev-out-name">讀取中…</span>
+              <span class="device-fmt" id="dev-out-fmt"></span></span>
+          </div>
+          <div class="device-row">
+            <span class="device-role">輸入（麥克風）</span>
+            <span><span class="device-name" id="dev-in-name">讀取中…</span>
+              <span class="device-fmt" id="dev-in-fmt"></span></span>
+          </div>
+          <p class="device-warn" id="dev-warn" hidden></p>
+          <div class="device-actions">
+            <button id="btn-refresh-devices" type="button">重新偵測</button>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>抓哪一路</span>
+          <select id="set-audio-source">
+            <option value="both">兩路都抓（對方＋你自己）</option>
+            <option value="system">只抓對方：電腦播出的聲音</option>
+            <option value="microphone">只抓自己：麥克風</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>錄音存放資料夾（留空＝不錄音）</span>
+          <span class="field-row">
+            <input id="set-recording-dir" type="text" spellcheck="false" />
+            <button id="btn-pick-recording-dir" type="button">瀏覽…</button>
+          </span>
+        </label>
+        <label class="field">
+          <span>取名後的資料夾名稱</span>
+          <select id="set-folder-name-order">
+            <option value="name_first">名字在前：週會-2026-09-23_1430</option>
+            <option value="date_first">日期在前：2026-09-23_1430-週會</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>顯示</h3>
+        <label class="field">
+          <span>字級</span>
+          <input id="set-font-size" type="number" min="10" max="48" step="1" />
+        </label>
+        <label class="field">
+          <span>字幕保留行數</span>
+          <input id="set-max-lines" type="number" min="1" max="20" step="1" />
+        </label>
+        <label class="field">
+          <span>透明度 <em id="set-opacity-value"></em></span>
+          <input id="set-opacity" type="range" min="20" max="100" step="1" />
+        </label>
+        <label class="field checkbox">
+          <input id="set-show-original" type="checkbox" />
+          <span>同時顯示原文</span>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>出問題時</h3>
+        <label class="field">
+          <span>執行紀錄（每開一次一份，出狀況請把整包寄回來）</span>
+          <span class="field-row">
+            <input id="set-log-dir" type="text" spellcheck="false" readonly />
+            <button id="btn-open-log-dir" type="button">開啟資料夾</button>
+          </span>
+        </label>
+        <!-- 設定檔位置。設定與紀錄優先寫在程式旁邊、
+             寫不進去才退回使用者自己的資料夾——兩條路都合法，所以**位置必須看得見**。
+             ⚠ 使用者要問的是「我填的金鑰存到哪去了」，他會來設定頁找，不會去翻 log。 -->
+        <label class="field">
+          <span>設定檔（整包複製給別人時，這個檔會跟著走）</span>
+          <input id="set-settings-path" type="text" spellcheck="false" readonly />
+        </label>
+      </section>
+
+      <footer class="modal-actions">
+        <button id="btn-settings-close" type="button">關閉</button>
+        <button id="btn-settings-save" type="button" class="primary">儲存</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 記錄庫：清單 →（點一場）→ 原文｜譯文兩欄 -->
+  <div id="library-modal" class="modal-overlay" hidden>
+    <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="library-title">
+      <div class="library-head">
+        <button id="btn-library-back" type="button" hidden>← 清單</button>
+        <h2 id="library-title">記錄庫</h2>
+        <div class="spacer"></div>
+        <input id="library-search" type="search" placeholder="搜尋（標題或內容）" spellcheck="false" />
+      </div>
+      <div id="library-list" class="library-list"></div>
+      <div id="library-detail" class="library-detail" hidden></div>
+      <footer class="modal-actions">
+        <button id="btn-library-close" type="button">關閉</button>
+      </footer>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+
+</html>

@@ -80,12 +80,12 @@ pub fn list_transcripts(app: AppHandle) -> Result<Vec<TranscriptEntry>, String> 
                 .replace('_', " ")
                 .replace('-', ":")
                 // Fix date separator: first two colons are date separators
-                // Transform "2026:03:27 10:21:05" → "2026-03-27 10:21:05"
+                // Transform "YYYY:MM:DD 10:21:05" → "YYYY-MM-DD 10:21:05"
                 .to_string();
             // More accurate: split on space, fix date part
             let created_at = {
                 let base = filename.strip_suffix(".md").unwrap_or(&filename);
-                // base = "2026-03-27_10-21-05"
+                // base = "YYYY-MM-DD_10-21-05"
                 let parts: Vec<&str> = base.splitn(2, '_').collect();
                 if parts.len() == 2 {
                     let time_part = parts[1].replace('-', ":");

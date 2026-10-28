@@ -1,0 +1,43 @@
+Glossline 使用的 mp3 編碼元件（LAME）— 授權說明
+==========================================
+
+一、用了什麼
+- Glossline 錄音時會在 wav 旁邊多存一份 mp3（them.mp3／me.mp3）。
+  壓成 mp3 這件事是 LAME 做的：LAME 3.100，The LAME Project 的開放原始碼 mp3 編碼器，
+  官方網站 https://lame.sourceforge.io/ 。
+- LAME 是獨立檔案 libmp3lame.dll，放在 glossline.exe 旁邊。Glossline 每次錄音時才去讀取它，
+  LAME 的程式碼沒有放進 glossline.exe 裡。
+- LAME 的授權是 GNU Library General Public License 第 2 版，或（依您選擇）任何更新的版本。
+  全文在同一個資料夾的 COPYING；LAME 對商業程式使用它的說明在 LICENSE。
+  這兩個檔案是 LAME 原始碼裡的原檔，沒有改過。
+- libmp3lame.dll 裡也包含 LAME 附的 mp3 解碼器（mpglib／hip，同樣是 LGPL）。Glossline 只用編碼的部分。
+
+二、從哪裡取得原始碼
+- 本 DLL 是用 LAME 3.100 的原始碼、未經任何修改，自行用 Microsoft Visual C++ 編譯的。
+- 用的原始碼一模一樣地附在同一個資料夾：lame-3.100-source.zip。
+- 原始碼來源：crates.io 套件 mp3lame-sys 0.1.11 內附的 lame-3.100 資料夾
+  （https://crates.io/crates/mp3lame-sys ）；LAME 官方的 3.100 版也可以在上面的官方網站取得。
+- 編譯步驟：build_lame_dll.bat（同一個資料夾附了一份；需要 Visual Studio Build Tools 的 C++ 編譯器）。
+
+三、怎麼換成自己的 DLL
+- 只要把 glossline.exe 旁邊的 libmp3lame.dll 換成您自己編譯的版本（同樣是 64 位元、
+  同樣的檔名、提供 LAME 標準的函式：lame_init、lame_set_*、lame_init_params、
+  lame_encode_buffer、lame_encode_flush、lame_get_lametag_frame、lame_close），
+  下次按「開始」錄音就會用新的那一份。不需要重新編譯 Glossline。
+- 如果 libmp3lame.dll 不在、壞掉或缺函式，Glossline 只會停掉 mp3 這一份並在畫面上提示，
+  wav 錄音與即時字幕照常運作。
+
+四、沒有保固
+- LAME 依其授權「不附任何保固」提供，詳見 COPYING。
+
+=====================================================================
+English summary
+- Glossline writes an mp3 copy of each recording with LAME 3.100 (https://lame.sourceforge.io/),
+  which ships as a separate libmp3lame.dll beside glossline.exe and is loaded at run time.
+- LAME is licensed under the GNU Library General Public License, version 2 or (at your option)
+  any later version; full text in COPYING, LAME's own notes in LICENSE.
+- The DLL was built, unmodified, from the LAME 3.100 source included here as
+  lame-3.100-source.zip (taken from the crates.io package mp3lame-sys 0.1.11), with MSVC,
+  using tools/build_lame_dll.bat from the Glossline source.
+- To use your own build, replace libmp3lame.dll (64-bit, same file name, standard LAME API).
+  If it is missing or broken, only the mp3 copy stops; the WAV recording and subtitles continue.

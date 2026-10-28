@@ -1,4 +1,10 @@
+// Bluetooth call-mode (HFP) guard.
+pub mod degraded;
+// compressed copy (them.mp3 / me.mp3) written beside the WAV.
+pub mod compressed;
 pub mod microphone;
+// raw-tap WAV recorder.
+pub mod recorder;
 pub mod resampler;
 
 #[cfg(target_os = "macos")]

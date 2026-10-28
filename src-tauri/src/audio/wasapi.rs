@@ -3,7 +3,10 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::degraded::{self, Warner};
+use super::recorder::{Recorder, RecordingSummary};
 use super::TARGET_SAMPLE_RATE;
+use std::path::PathBuf;
 
 /// System audio capture using WASAPI loopback on Windows.
 /// Captures all system audio output and converts to PCM s16le 16kHz mono.
@@ -15,18 +18,29 @@ use super::TARGET_SAMPLE_RATE;
 /// will be revisited once it can be properly tested on a real Windows machine.
 pub struct SystemAudioCapture {
     is_capturing: Arc<AtomicBool>,
+    /// Filled by the capture thread when a recording it
+    /// started finishes, so `stop()` can report where the file went.
+    last_recording: Arc<std::sync::Mutex<Option<RecordingSummary>>>,
 }
 
 impl SystemAudioCapture {
     pub fn new() -> Self {
         Self {
             is_capturing: Arc::new(AtomicBool::new(false)),
+            last_recording: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
     /// Start capturing system audio via WASAPI loopback.
     /// Returns a receiver that yields PCM s16le 16kHz mono audio chunks.
-    pub fn start(&self) -> Result<mpsc::Receiver<Vec<u8>>, String> {
+    /// `record_to`: when set, the raw device audio is also written there as a
+    /// WAV file, tapped before the 16 kHz/mono conversion. The file is created
+    /// inside the capture thread because the device format is only known there.
+    pub fn start(
+        &self,
+        record_to: Option<PathBuf>,
+        warn: Option<Warner>,
+    ) -> Result<mpsc::Receiver<Vec<u8>>, String> {
         if self.is_capturing.load(Ordering::SeqCst) {
             return Err("Already capturing".to_string());
         }
@@ -35,11 +49,21 @@ impl SystemAudioCapture {
         let is_capturing = self.is_capturing.clone();
         is_capturing.store(true, Ordering::SeqCst);
 
+        let last_recording = self.last_recording.clone();
+        if let Ok(mut slot) = last_recording.lock() {
+            *slot = None;
+        }
+
         std::thread::spawn(move || {
-            run_legacy_loopback(sender, is_capturing);
+            run_legacy_loopback(sender, is_capturing, record_to, last_recording, warn);
         });
 
         Ok(receiver)
+    }
+
+    /// The summary of the most recently finished recording, if any.
+    pub fn last_recording(&self) -> Option<RecordingSummary> {
+        self.last_recording.lock().ok().and_then(|g| g.clone())
     }
 
     /// Stop capturing
@@ -74,7 +98,13 @@ use windows::Win32::System::Com::{
 // Legacy WASAPI loopback path (captures all system audio)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn run_legacy_loopback(sender: mpsc::Sender<Vec<u8>>, is_capturing: Arc<AtomicBool>) {
+fn run_legacy_loopback(
+    sender: mpsc::Sender<Vec<u8>>,
+    is_capturing: Arc<AtomicBool>,
+    record_to: Option<PathBuf>,
+    last_recording: Arc<std::sync::Mutex<Option<RecordingSummary>>>,
+    warn: Option<Warner>,
+) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
@@ -120,6 +150,18 @@ fn run_legacy_loopback(sender: mpsc::Sender<Vec<u8>>, is_capturing: Arc<AtomicBo
         let source_channels = mix_format.nChannels as u32;
         let bits_per_sample = mix_format.wBitsPerSample;
 
+        // Bluetooth check: if the default output endpoint is
+        // telephone-grade mono, a Bluetooth headset has flipped to call mode
+        // and everything from here on is muffled. Say so instead of recording
+        // a ruined meeting in silence.
+        degraded::check(
+            &warn,
+            "system audio (speaker output)",
+            "",
+            source_rate,
+            source_channels as u16,
+        );
+
         if let Err(e) = audio_client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
             AUDCLNT_STREAMFLAGS_LOOPBACK,
@@ -161,8 +203,37 @@ fn run_legacy_loopback(sender: mpsc::Sender<Vec<u8>>, is_capturing: Arc<AtomicBo
             return;
         }
 
+        // Recording tap. Created here because
+        // the device format is only known after GetMixFormat above. The file
+        // keeps the device's own rate/channels; only the Soniox path is
+        // downmixed to 16 kHz mono.
+        let recorder = record_to.and_then(|path| {
+            match Recorder::create(path, source_rate, source_channels as u16) {
+                Ok(r) => {
+                    eprintln!(
+                        "[wasapi] recording raw loopback: {} Hz, {} ch, 16-bit",
+                        source_rate, source_channels
+                    );
+                    // + them.mp3 beside it.
+                    Some(r.with_compressed_copy(warn.clone()))
+                }
+                Err(e) => {
+                    eprintln!("[wasapi] RECORDING DISABLED — could not create file: {}", e);
+                    None
+                }
+            }
+        });
+        let mut silent_packets = 0u64;
+        let mut silent_frames = 0u64;
+
         while is_capturing.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(10));
+
+            // Advance the file even when the render endpoint hands us nothing
+            // at all, so an idle stretch stays on the time line.
+            if let Some(rec) = &recorder {
+                rec.pad_to_wall_clock();
+            }
 
             let packet_size = match capture_client.GetNextPacketSize() {
                 Ok(size) => size,
@@ -187,6 +258,28 @@ fn run_legacy_loopback(sender: mpsc::Sender<Vec<u8>>, is_capturing: Arc<AtomicBo
             if num_frames > 0 && !buffer_ptr.is_null() {
                 let is_silent = (flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)) != 0;
 
+                // Archive tap. A SILENT packet's buffer
+                // contents are undefined per the WASAPI contract, so it is
+                // written as real zero frames rather than skipped — dropping it
+                // is what shortens the time line.
+                if let Some(rec) = &recorder {
+                    if is_silent {
+                        silent_packets += 1;
+                        silent_frames += num_frames as u64;
+                        rec.write_silence(num_frames as u64);
+                    } else if bits_per_sample == 32 {
+                        rec.write_f32(std::slice::from_raw_parts(
+                            buffer_ptr as *const f32,
+                            num_frames as usize * source_channels as usize,
+                        ));
+                    } else if bits_per_sample == 16 {
+                        rec.write_s16(std::slice::from_raw_parts(
+                            buffer_ptr,
+                            num_frames as usize * source_channels as usize * 2,
+                        ));
+                    }
+                }
+
                 if !is_silent {
                     let pcm_data = convert_to_pcm_s16_16k(
                         buffer_ptr,
@@ -205,6 +298,28 @@ fn run_legacy_loopback(sender: mpsc::Sender<Vec<u8>>, is_capturing: Arc<AtomicBo
             }
 
             let _ = capture_client.ReleaseBuffer(num_frames);
+        }
+
+        // Close the archive file before tearing down COM.
+        if let Some(rec) = &recorder {
+            if let Some(summary) = rec.finish() {
+                eprintln!(
+                    "[wasapi] recording done: {} ({:.1}s, {} bytes, padded {:.1}s in {} gaps,                      {} silent packets / {:.1}s written as zeros)",
+                    summary.path,
+                    summary.seconds,
+                    summary.bytes,
+                    summary.padded_seconds,
+                    summary.pad_events,
+                    silent_packets,
+                    silent_frames as f64 / source_rate as f64
+                );
+                if let Ok(mut slot) = last_recording.lock() {
+                    *slot = Some(summary);
+                }
+            }
+            // Only after the WAV summary is
+            // in the slot `stop_capture` reads 300 ms later.
+            rec.finish_compressed();
         }
 
         // Cleanup: stop, drop COM objects, then CoUninitialize.

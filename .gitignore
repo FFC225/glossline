@@ -73,3 +73,11 @@ live-test/
 .env.local
 _drafts
 tts-models/
+
+# Local data that must never be committed
+*.orig
+__pycache__/
+recordings/
+*.wav
+*.mp3
+settings.json

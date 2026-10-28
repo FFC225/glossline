@@ -58,11 +58,11 @@ if (identifier) {
   // the " Dev" name makes the app distinct in Finder and the macOS permission lists. The
   // release path (`npm run build` / `npm run tauri build`) does NOT use this wrapper, so it
   // keeps the real identifier, product name, and Developer ID identity from tauri.conf.json.
-  const baseName = readConfValue('productName') || 'MyTranslator';
+  const baseName = readConfValue('productName') || 'Glossline';
   const devName = baseName.endsWith(' Dev') ? baseName : `${baseName} Dev`;
   // Signing identity: ad-hoc "-" by default. Ad-hoc changes on every rebuild, so macOS
   // Screen-Recording permission does NOT persist across rebuilds. Set APP_SIGNING_IDENTITY
-  // in .env to a STABLE cert name (e.g. a self-signed "MyTranslator Dev" cert) to make the
+  // in .env to a STABLE cert name (e.g. a self-signed "Glossline Dev" cert) to make the
   // permission stick across rebuilds.
   const signingIdentity =
     process.env.APP_SIGNING_IDENTITY || readEnvValue('APP_SIGNING_IDENTITY') || '-';

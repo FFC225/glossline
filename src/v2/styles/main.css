@@ -1,0 +1,537 @@
+/* ⭐ 藏起來就是要藏起來。
+   規則裡只要寫了 display（`.library-list` / `.modal-overlay` 這種 flex 容器），
+   就會壓過瀏覽器內建的 [hidden]{display:none}——元素照樣看得見，
+   而且**沒有任何錯誤訊息**，只是兩個畫面疊在一起。
+   ⚠ 實撞過：記錄庫點進一場之後，清單沒有消失、和明細疊成一團。
+   原本上游只在 .modal-overlay 補過一次（逐處手工補），這裡改成一條全域的，
+   以後新增任何 flex/grid 容器都不必再記得補。 */
+[hidden] { display: none !important; }
+
+/* 亮暗兩版：顏色全部只在這裡宣告一次，其餘規則一律用變數。
+   ⚠ 規矩一條：任何顏色都不准寫死在下面的規則裡——寫死的那個在另一版會消失，
+   而且不會有錯誤訊息，只是某塊字看不見。 */
+:root,
+:root[data-theme="dark"] {
+  --bg: #14161a;
+  --panel: #1c1f26;
+  --line: #2b3039;
+  --text: #e8eaed;
+  --muted: #9aa3af;
+  --accent: #4c8dff;
+  --on-accent: #0d1117;
+  --danger: #ef5350;
+  /* 「還能用、只是提醒」專用，跟 --danger 分開：都用紅的話人會學會忽略紅字。 */
+  --warn: #e8a33d;
+  --scrim: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+/* 字級。
+   判準是「開會都在電腦前」——距離約六十公分，所以決定好壞的不是字大不大，
+   而是①一小時盯著累不累 ②數字會不會看錯 ③同樣高度看得到幾句。
+   顏色因此一個值都沒改；改的是字級與數字。
+   --fs-base 由 main.js 依設定的「字級」寫入，字幕兩級由它推出來，
+   所以使用者調字級時整組跟著動、不會只動一半。 */
+:root {
+  --fs-base: 16px;
+  --fs-orig: calc(var(--fs-base) * 1.375);   /* 字幕原文  16 -> 22 */
+  --fs-trans: calc(var(--fs-base) * 1.625);  /* 字幕譯文  16 -> 26 */
+  --fw-orig: 400;
+  --fw-trans: 600;
+  --sub-gap: 12px;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --line: #d8dce3;
+  --text: #1b1f27;
+  --muted: #5c6572;
+  --accent: #1a6fe0;
+  --on-accent: #ffffff;
+  --danger: #c62828;
+  --warn: #9a6100;
+  --scrim: rgba(20, 22, 26, 0.42);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft JhengHei UI", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  /* 等寬數字：比例數字裡 1 比別的窄，金額與日期會歪掉、上下對不齊。
+     本專案真正吃過虧的地方就是數字（金額、日期、天數）。 */
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+
+#drag-region {
+  display: flex;
+  align-items: center;
+  /* 窄視窗時讓按鈕自己換行，而不是把視窗撐開。並排（貼齊分半）時
+     每半邊只有幾百邏輯像素，撐開＝縮不下去。 */
+  flex-wrap: wrap;
+  row-gap: 4px;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+.app-title { font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; }
+.spacer { flex: 1; }
+
+.icon-btn {
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.icon-btn:hover { border-color: var(--accent); }
+.icon-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.icon-btn.is-on { border-color: var(--accent); color: var(--accent); }
+
+/* ⭐ 窄視窗（並排、小浮窗）：標題與按鈕上的字先讓位，只留圖示。
+   ⚠ 這裡只准藏「說明性的字」——警示列（#alert-line）與狀態列一個字都不准動，
+   那些警示（會議模式禁止靜默降級）在視窗最小的時候更要看得見。 */
+@media (max-width: 700px) {
+  .app-title { display: none; }
+}
+@media (max-width: 620px) {
+  .btn-label { display: none; }
+  .icon-btn { padding: 4px 7px; }
+  #drag-region { gap: 5px; padding: 5px 7px; }
+}
+
+#main-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+  gap: 8px;
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.placeholder { color: var(--muted); margin: 0; }
+
+/* 字幕兩級。接上真實資料時直接用這兩個類別，別另外寫字級。
+   原文與譯文靠「字級差＋顏色差」分，不靠粗體——近距離看粗體很吵。 */
+#subtitle-panel { display: flex; flex-direction: column; gap: var(--sub-gap); }
+.sub-line { display: flex; flex-direction: column; gap: 3px; }
+.sub-orig {
+  font-size: var(--fs-orig);
+  font-weight: var(--fw-orig);
+  color: var(--muted);
+  line-height: 1.4;
+}
+.sub-trans {
+  font-size: var(--fs-trans);
+  font-weight: var(--fw-trans);
+  color: var(--text);
+  line-height: 1.45;
+}
+.sub-meta { font-size: 11px; color: var(--muted); letter-spacing: 0.02em; }
+/* 暫時字幕（還在講的那半句）：淡一點、不用斜體——斜體在中文字型下很難讀。 */
+.sub-line.is-partial { opacity: 0.62; }
+/* 「同時顯示原文」關掉時只藏這一行，資料照存、記錄庫看得到。 */
+#subtitle-panel.hide-orig .sub-orig { display: none; }
+
+.control-bar { display: flex; align-items: center; gap: 12px; }
+.primary-btn {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--on-accent);
+  border-radius: 6px;
+  padding: 6px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  flex: none;
+}
+.primary-btn.is-running { background: var(--danger); border-color: var(--danger); color: #fff; }
+.primary-btn:disabled { opacity: 0.5; cursor: default; }
+
+.status-line { margin: 0; color: var(--muted); font-size: 12px; }
+
+/* ── 視窗外殼：兩種模式 ＋ 收音中自動收起（window-shell.js） ──────────────── */
+
+/* 大視窗：字幕不貼著左右邊，一行不會長到眼睛要橫著掃。
+   小浮窗維持原樣（12px），因為那時候寬度本來就不夠拿來留白。 */
+body.expanded #main-view { padding: 18px clamp(16px, 7%, 120px); }
+body.expanded .panel { padding: 18px; }
+
+#drag-region,
+.control-bar {
+  transition: height 0.16s ease, opacity 0.16s ease, padding 0.16s ease;
+}
+
+/* 收起來的樣子。⚠ 標題列**不能收到 0**：視窗是 decorations:false，
+   這條就是唯一能拖動視窗的地方，收光了視窗就再也拖不動、而且不會有錯誤訊息。
+   所以留 6px 的可拖動帶，裡面的按鈕用 visibility 藏起來（免得誤觸看不見的鈕）。 */
+body.chrome-hidden #drag-region {
+  height: 6px;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0.3;
+  border-bottom-color: transparent;
+}
+body.chrome-hidden #drag-region > * { visibility: hidden; }
+
+body.chrome-hidden .control-bar {
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+
+/* ⚠ #alert-line 不在收起清單裡，這是刻意的：斷線、藍牙降級、存檔失敗都是「不可靜默降級」那件事，
+   外殼收起來的時候更要看得見。 */
+
+/* 斷線／藍牙降級／存檔失敗。這一行留在畫面上不會自己消失——
+   會議進行中沒有人會盯著三秒就不見的提示。 */
+/* ── 收尾進度 ──────────────────────────────
+   ⚠ 四格代表「第幾步」，**不是時間比例**——理由寫在 index.html 那段註解裡。
+   ⚠ 「正在跑的那一格會動」是這整塊唯一真正的訊息：靜止的填色沒辦法分辨
+     「還在跑」和「卡死了」，而那正好就是使用者按下停止之後想知道的事。
+     所以 `.is-live` 的動畫不是裝飾，拿掉就等於這個功能沒做。 */
+.stop-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+.stop-progress-bar { display: flex; gap: 4px; height: 6px; }
+.stop-progress-bar span { flex: 1; border-radius: 3px; background: var(--line); }
+.stop-progress-bar span.is-done { background: var(--accent); }
+.stop-progress-bar span.is-live {
+  background: var(--accent);
+  animation: stop-progress-pulse 1.1s ease-in-out infinite;
+}
+@keyframes stop-progress-pulse {
+  0%, 100% { opacity: 0.28; }
+  50%      { opacity: 1; }
+}
+/* 關掉動態效果的人，「還活著」的證據改由旁邊那個秒數承擔（它每 250 毫秒自己跳一次）。
+   ⚠ 所以這裡可以安心停掉脈動，但**不可以連秒數一起省掉**，否則這個模式下
+     畫面又變回「一片靜止」，跟卡死長得一模一樣。 */
+@media (prefers-reduced-motion: reduce) {
+  .stop-progress-bar span.is-live { animation: none; opacity: 1; }
+}
+.stop-progress-text { margin: 0; font-size: 12px; color: var(--muted); }
+.stop-progress-slow { margin: 0; font-size: 12px; color: var(--danger); font-weight: 600; }
+
+.alert-line {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  border-left: 3px solid var(--line);
+  padding-left: 8px;
+}
+.alert-line.fatal { color: var(--danger); border-left-color: var(--danger); }
+.mic-alert { display: flex; align-items: center; gap: 8px; }
+.mic-alert[hidden] { display: none; }
+.mic-alert button { flex: none; font-size: 12px; }
+
+/* 常駐通知區：收工報告的判決、未錄音、麥克風沒開起來共用。
+   ⚠ 兩條限制，違反任何一條都會在最需要的時候消失：
+     ① 不在 body.chrome-hidden 的收起清單裡（同 #alert-line，位置見 index.html 的註解）
+     ② **窄視窗一個字都不准隱藏**——所以上面那兩條 @media 不可以把它列進去。
+   和 #alert-line 的分工：那一格是「最新一則」、會被下一則洗掉；這裡是「還沒解決的事」，
+   只有下一次按開始才清。 */
+.persistent-notice { display: flex; flex-direction: column; gap: 4px; }
+.persistent-notice p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+  border-left: 3px solid var(--danger);
+  padding-left: 8px;
+}
+
+/* 錄音讀秒。等寬數字，不然每一秒的字寬都在變、整行字會左右抖。 */
+.recording-elapsed {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* 錄音中的持續指示。
+   跟警示分開一個顏色——它不是在報告問題，是在陳述一個事實。
+
+   ⚠ 修正過：這段註解原本就這樣寫，但底下三個顏色全是 `--danger`，
+     於是畫面上「正在錄音」跟「麥克風不見了」長得一模一樣。
+     一眼的反應是「怎麼這麼多紅字」——紅色被用在不需要處理的事情上，
+     真正要處理的那一行就一起貶值了。
+     現在只留那顆紅點（文字裡的 🔴）當視覺標記，字與左邊那條都回到一般色。 */
+.recording-indicator {
+  display: block;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--text);
+  border-left: 3px solid var(--line);
+  padding-left: 8px;
+}
+
+/* 錄音告知的勾選欄。刻意放在按鈕上面、字不縮小——
+   一段縮到 11px 的法律文字，等於沒有寫。 */
+/* 錄音告知。現在是一行不擋人的提示，不是勾選欄。
+   邊框從紅色改成黃色——紅色留給「不做會出事」的那幾項，
+   這一句是提醒，混用會讓真正的紅字掉價。 */
+.precheck-consent {
+  display: block;
+  margin: 12px 0 0;
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+}
+
+/* 開始前的自我檢查。紅的那幾行要一眼認得出來，
+   但綠的也要在——只列壞的那幾項，人會以為這個框在亂叫。 */
+.precheck-headline { margin: 0 0 10px; font-size: 13px; line-height: 1.6; }
+.precheck-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; }
+.precheck-row + .precheck-row { border-top: 1px solid var(--border); }
+.precheck-mark { flex: none; width: 1.2em; text-align: center; font-weight: 700; }
+.precheck-row.is-ok .precheck-mark { color: var(--ok, #4caf50); }
+.precheck-row.is-warn .precheck-mark { color: var(--warn, #e0a800); }
+.precheck-row.is-fail .precheck-mark { color: var(--danger); }
+.precheck-text { min-width: 0; }
+.precheck-label { margin: 0; font-size: 13px; }
+.precheck-detail { margin: 2px 0 0; font-size: 12px; line-height: 1.5; opacity: 0.85; word-break: break-all; }
+.precheck-row.is-fail .precheck-label { color: var(--danger); }
+
+/* 記錄庫 */
+.modal-card.wide { width: min(920px, 100%); display: flex; flex-direction: column; }
+.library-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* 標題是「這場的第一句話」，可以很長。不夾住它就會把搜尋框擠出去、或撐成兩行。 */
+.library-head h2 {
+  margin: 0; font-size: 18px;
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.library-head button {
+  background: transparent; border: 1px solid var(--line); color: var(--text);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.library-head input { flex: none; width: 220px; }
+
+.library-list { display: flex; flex-direction: column; gap: 6px; min-height: 120px; }
+.session-row {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px 10px; cursor: pointer; font: inherit; color: var(--text);
+}
+.session-row:hover { border-color: var(--accent); }
+.session-title { font-weight: 600; }
+.session-meta { color: var(--muted); font-size: 12px; }
+
+.detail-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.detail-bar button {
+  background: transparent; border: 1px solid var(--line); color: var(--text);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.detail-bar button.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+/* 兩欄：左原文、右中文。時間那格固定寬，句子長短不會讓兩欄晃來晃去。 */
+.seg-table { display: flex; flex-direction: column; }
+.seg-row {
+  display: grid;
+  grid-template-columns: 7.5em 1fr 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  align-items: start;
+  line-height: 1.5;
+}
+.seg-head { color: var(--muted); font-size: 12px; border-top: none; }
+.seg-time { color: var(--muted); font-size: 12px; }
+.seg-src { color: var(--muted); }
+.seg-tgt { color: var(--text); }
+/* 「＝原文」不是缺漏：那段講的就是目標語言，Soniox 本來就不送譯文。 */
+.seg-tgt.is-same { color: var(--muted); font-style: normal; opacity: 0.7; }
+
+.legacy-md { white-space: pre-wrap; font-size: 12px; line-height: 1.6; margin: 0; }
+
+/* 儲存提示必須疊在設定視窗「之上」。
+   兩個都是 position:fixed 又都沒有 z-index 時，DOM 順序在後的遮罩會蓋住 toast——
+   於是按下儲存其實成功了、卻什麼都看不到，看起來就像按鈕沒反應。
+   （實撞過：「按了儲存會沒用」，其實是存進去了、提示被蓋住。） */
+.toast {
+  z-index: 200;
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(12px);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s;
+}
+.toast.is-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.error { border-color: var(--danger); color: var(--danger); }
+
+.modal-overlay {
+  z-index: 100;
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-card {
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+}
+
+.modal-card h2 { margin: 0 0 12px; font-size: 18px; }
+.settings-section { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+.settings-section:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+.settings-section h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.field > span { font-size: 12px; color: var(--muted); }
+.field.checkbox { flex-direction: row; align-items: center; gap: 8px; }
+.field-row { display: flex; gap: 6px; }
+.field-row input { flex: 1; }
+
+input[type="text"], input[type="password"], input[type="number"], select, textarea {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 8px;
+  font: inherit;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; }
+
+/* 目前實際在用的輸入／輸出裝置。藍牙耳機一被程式碰到麥克風就整條降級成
+   電話品質，畫面上完全沒有提示——所以這塊要把裝置名稱與取樣率直接寫出來。 */
+.device-box {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.device-row { display: flex; gap: 8px; align-items: baseline; }
+.device-role { color: var(--muted); font-size: 12px; min-width: 5.5em; flex: none; }
+.device-name { font-weight: 600; word-break: break-all; }
+.device-fmt { color: var(--muted); font-size: 12px; }
+.device-warn { color: var(--danger); font-size: 12px; line-height: 1.5; white-space: pre-line; margin: 0; }
+.device-actions { display: flex; justify-content: flex-end; }
+.device-actions button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+/* 收工報告。判決那一段刻意做得醒目：這是散會前唯一會講出
+   「這一軌整場沒收到聲音」的地方，看漏了就等於沒做。 */
+.report-folder { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+.report-folder code { font-size: 12px; word-break: break-all; }
+.report-track { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.report-track h3 { margin: 0 0 6px; font-size: 13px; }
+.report-track.is-bad { border-color: var(--danger); }
+.report-headline { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.report-detail { margin: 0; font-size: 12px; color: var(--muted); }
+.report-verdict { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--danger); font-weight: 600; }
+.report-blindspot { margin: 12px 0 0; font-size: 11px; line-height: 1.6; color: var(--muted); }
+
+/* 判決的「為什麼」。結論一句話用紅字講完，原因收在這裡面——
+   實測後使用者的原話：「太長沒人看得完」，而沒被看完的警告等於沒有警告。 */
+.report-why { margin: 6px 0 0; }
+.report-why summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.report-why p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+
+/* 散會命名。跟判決分開一塊、有自己的框線：那些是「出了什麼事」，
+   這裡是「要你做一件事」，混在一起人會整段跳過。 */
+#report-name-row {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+#report-name-row label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+.report-name-controls { display: flex; gap: 8px; }
+.report-name-controls input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+}
+.report-name-controls button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--on-accent);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+}
+#report-name-hint { margin: 6px 0 0; font-size: 11px; line-height: 1.6; color: var(--muted); }
+#report-name-status { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+#report-name-status.is-bad { color: var(--danger); font-weight: 600; }
+
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-actions button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+.modal-actions .primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }

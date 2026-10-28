@@ -1,8 +1,8 @@
 [package]
-name = "my-translator"
-version = "0.9.1"
-description = "Personal Real-time Speech Translator"
-authors = ["phucnt"]
+name = "glossline"
+version = "2026.9.16"
+description = "Glossline — 會議即時字幕與雙軌錄音"
+authors = ["FFC225"]
 edition = "2021"
 
 [lib]
@@ -25,23 +25,21 @@ serde_json = "1"
 dirs = "6"
 chrono = "0.4"
 cpal = "0.15"
-reqwest = { version = "0.12", features = ["rustls-tls", "stream"] }
-uuid = { version = "1", features = ["v4"] }
-base64 = "0.22"
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
-futures-util = "0.3"
-http = "1"
-sha2 = "0.10"
-hex = "0.4"
-rand = "0.8"
-tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 rubato = "0.16"
-# Local offline TTS: Piper (VITS) via sherpa-onnx (static-linked, no dylib bundling).
-sherpa-onnx = "1.13.3"
+# reqwest / tokio / tokio-tungstenite / futures-util /
+# http / base64 / uuid / sha2 / hex / rand went out with the 20 commands (TTS, MLX,
+# OpenAI and Qwen). Soniox talks over the frontend WebSocket, so nothing in Rust
+# opens a socket any more. Put one back only together with the code that needs it.
+# sherpa-onnx removed: offline TTS unused, and it is the
+# most common Windows build breaker (pulls native ONNX Runtime at build time).
 tauri-plugin-dialog = "2"
-# Model archive extraction (.tar.bz2) for downloaded Piper voices.
-tar = "0.4"
-bzip2 = "0.4"
+# tar/bzip2 removed with the Piper voice downloader.
+# ed25519-dalek / rand_core removed with the licence key (open source, free).
+# Compressed copy of each recording (them.mp3 /
+# me.mp3). LAME is LGPL, so it is *not* linked in: it is a separate
+# libmp3lame.dll beside the exe (built from source by tools/build_lame_dll.bat)
+# and loaded at run time. libloading is ISC and already in the tree via tauri.
+libloading = "0.8"
 
 # macOS: ScreenCaptureKit for system audio
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -54,8 +52,15 @@ windows = { version = "0.58", features = [
   "Win32_Media_Audio",
   "Win32_System_Com",
   "Win32_Foundation",
+  # applog.rs:SetStdHandle (Console) + GetFileType
+  # (FileSystem, to detect that the launcher is already capturing us).
+  "Win32_System_Console",
+  "Win32_Storage_FileSystem",
+  # precheck.rs:RegGetValueW, for the Windows build
+  # number. GetVersionEx lies without an application manifest, and 11 still
+  # calls itself 10 everywhere but the build number.
+  "Win32_System_Registry",
 ] }
 
-[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
-tauri-plugin-updater = "2.10.0"
-tauri-plugin-process = "2"
+# tauri-plugin-updater / tauri-plugin-process removed:
+# the updater pointed at unsigned GitHub-release .exe files (unsigned binaries are never run).

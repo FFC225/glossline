@@ -5,7 +5,11 @@
 #   1. Developer ID Application cert installed (signingIdentity in tauri.conf.json).
 #   2. App-specific password stored via:
 #        xcrun notarytool store-credentials "my-translator" \
-#          --apple-id "phucnt0@gmail.com" --team-id "75EN938B6L"
+#          --apple-id "<your-apple-id>" --team-id "<YOUR_TEAM_ID>"
+#
+# 2026-09-13: the upstream author's Apple ID and Team ID were removed from this
+# file. They are his personal data, they are useless to us (we do not ship a mac
+# build), and this file goes out with the source. Supply your own via .env.
 #
 # Usage:  ./scripts/build-notarized.sh
 #
@@ -24,12 +28,17 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   set +a
 fi
 
-APPLE_ID="${APPLE_ID:-phucnt0@gmail.com}"
-APPLE_TEAM_ID="${APPLE_TEAM_ID:-75EN938B6L}"
+APPLE_ID="${APPLE_ID:-}"
+APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
 
-if [[ -z "${APPLE_PASSWORD:-}" ]]; then
-  echo "ERROR: APPLE_PASSWORD not set." >&2
-  echo "Create .env in repo root with: APPLE_PASSWORD=xxxx-xxxx-xxxx-xxxx" >&2
+# All three are now required. They used to have defaults baked in, so a missing
+# .env still produced a build attempt -- signed with somebody else's identity.
+if [[ -z "${APPLE_ID:-}" || -z "${APPLE_TEAM_ID:-}" || -z "${APPLE_PASSWORD:-}" ]]; then
+  echo "ERROR: APPLE_ID, APPLE_TEAM_ID and APPLE_PASSWORD must all be set." >&2
+  echo "Create .env in repo root with:" >&2
+  echo "  APPLE_ID=you@example.com" >&2
+  echo "  APPLE_TEAM_ID=XXXXXXXXXX" >&2
+  echo "  APPLE_PASSWORD=xxxx-xxxx-xxxx-xxxx" >&2
   exit 1
 fi
 
