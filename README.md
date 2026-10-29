@@ -71,6 +71,19 @@ On first start, open Settings and paste your Soniox API key.
   - Many Rust dependencies run code at build time. This is normal for the Rust ecosystem; `Cargo.lock` pins the versions.
   - The recording folder from settings is not normalized, and network (UNC) paths are not blocked.
 
+## After the meeting: summaries
+
+*This is the short version. The full method is in [docs/summary-workflow.md](docs/summary-workflow.md).*
+
+Glossline does not write summaries. We make them with a method you can copy (the method is shared, not our scripts):
+
+- **One AI writes, a second AI reviews.** The writer then checks every review point against the transcript. A rejected point must quote the caption line that proves it wrong.
+- **A script decides, not the AI.** Every time cited in the summary must exist in the transcript, decisions must be split into "settled" and "only suggested", and every review point must be answered. If a check fails, there is no output.
+- **Confidence is shown, not hidden.** Every number is marked "not listened back". Optionally, an AI that can hear audio listens to doubtful parts three times and a script sets a light (🔴 🟡 ⚪). Only a person who listened can make it 🟢.
+- **The limit:** a script can check that every point was answered, not that the answer is right.
+
+In our small test (5 company meetings), another AI writing alone missed 43% of decisions, action items and numbers. Details: [docs/summary-workflow.md](docs/summary-workflow.md). Step-by-step guide for an AI assistant: [skills/meeting-summary/SKILL.md](skills/meeting-summary/SKILL.md).
+
 ## What changed from my-translator
 
 Kept: the Rust and Tauri base, Windows audio capture, and the Soniox connection.
@@ -103,3 +116,16 @@ Glossline 是 Windows 上的線上會議即時字幕＋翻譯工具。它同時�
 - 聲音會即時送到 Soniox；錄音與字幕紀錄只存在你的電腦。
 - Soniox 金鑰以**明文**存在設定檔裡。
 - 錄音前請先取得與會者同意。
+
+### 會後摘要
+
+*這是簡單版，完整說明在 [docs/summary-workflow.zh-TW.md](docs/summary-workflow.zh-TW.md)。*
+
+Glossline 本身不寫摘要。我們的做法公開，程式不公開：
+
+- **一個 AI 寫，另一個 AI 挑錯。** 寫的那個逐條回字幕原文核對；否決一條要指出字幕哪一句。
+- **程式把關，不是 AI 說了算。** 摘要引用的每個時間都要在字幕裡查得到、決議要分「有定調」和「只是提議」、每條挑錯都要回應，沒過就不出檔。
+- **信心度攤開來。** 數字一律標「未回聽」。選配：讓能聽音檔的 AI 重聽可疑處三次，程式打燈號（🔴 🟡 ⚪）；只有人親耳聽過才給 🟢。
+- **邊界：** 程式驗得到每條都回應了，驗不到回應對不對。
+
+小樣本實測（5 場公司會議）：另一家 AI 單獨寫，決議＋待辦＋數字漏了 43%。詳見 [docs/summary-workflow.zh-TW.md](docs/summary-workflow.zh-TW.md)；給 AI 助手照做的手冊：[skills/meeting-summary/SKILL.zh-TW.md](skills/meeting-summary/SKILL.zh-TW.md)。
